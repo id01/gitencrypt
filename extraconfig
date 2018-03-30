@@ -1,3 +1,3 @@
 [filter "gitencrypt"]
-	smudge = ~/Desktop/Programming/git_encrypt/decrypt.py %f a9aae6de5f9e0746aad02cd1b5b6bf5b4ebd5006108e4c9a179d8fdf6a1777a0 51026df7de9b8a295a1a1049db9acabb7c79f2d445f65939c4de64d7a41234cb
-	clean = ~/Desktop/Programming/git_encrypt/encrypt.py %f a9aae6de5f9e0746aad02cd1b5b6bf5b4ebd5006108e4c9a179d8fdf6a1777a0 51026df7de9b8a295a1a1049db9acabb7c79f2d445f65939c4de64d7a41234cb
+	smudge = ~/Desktop/Programming/git_encrypt/decrypt.py %f 51026df7de9b8a295a1a1049db9acabb7c79f2d445f65939c4de64d7a41234cb
+	clean = ~/Desktop/Programming/git_encrypt/encrypt.py %f 51026df7de9b8a295a1a1049db9acabb7c79f2d445f65939c4de64d7a41234cb
