@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import sys, os
+import sys, os, struct
 import zlib, hmac, hashlib
 from base64 import b85decode
 
@@ -24,11 +24,16 @@ if len(sys.argv) == 1:
 	myFile = sys.stdin
 
 # Generate secret key from password and salt
-MASTER_KEY=Scrypt(salt=PASSWORD_SALT, length=32, n=65536, r=8, p=1, backend=backend).derive(SECRET_PASSWORD)
+MASTER_KEY=Scrypt(salt=PASSWORD_SALT, length=32, n=32768, r=8, p=1, backend=backend).derive(SECRET_PASSWORD)
 
 # Initialize hmac for file
 filehmac = hmac.new(MASTER_KEY);
 realhmac = b'';
+
+# Get version
+VERSION = struct.unpack('>I', b85decode(bytes(myFile.readline().rstrip('\n'), 'ASCII')))[0]
+if VERSION not in [1]:
+	raise ValueError("Version unsupported")
 
 # Loop through lines in stdin
 for encodedraw in myFile:
@@ -36,7 +41,10 @@ for encodedraw in myFile:
 
 	if encoded:
 		encodedsplit = encoded.split(' ')
-		if encodedsplit[0] != 'H:':
+		if encodedsplit[0] == 'H:':
+			# Copy over hmac
+			realhmac = b85decode(bytes(encodedsplit[1], 'ASCII'))
+		else:
 			# Generate salt and key from deterministically generated seed.
 			lineseed = b85decode(bytes(encodedsplit[0], 'ASCII'))
 			linekey = hmac.new(MASTER_KEY, lineseed, hashlib.sha256).digest()
@@ -54,9 +62,6 @@ for encodedraw in myFile:
 
 			# Print to stdout
 			print(line.decode('utf-8'))
-		else:
-			# Copy over hmac
-			realhmac = b85decode(bytes(encodedsplit[1], 'ASCII'))
 	else:
 		# Empty line. Add newline to hmac.
 		filehmac.update(b'\n')
