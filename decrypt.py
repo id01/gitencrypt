@@ -4,16 +4,17 @@ import sys, os, struct
 import hmac, hashlib
 from base64 import b85decode
 
-import pyshoco
+import pyshoco, zlib, lzma
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from cryptography.hazmat.backends import default_backend
 backend = default_backend()
 
-# Default config
-SECRET_PASSWORD=b"some secret key here"
-PASSWORD_SALT=b"\x00"
+# Default config and version.
+SECRET_PASSWORD=b"some secret key here" # Should be specified by the user
+PASSWORD_SALT=b"\x00" # I really need to find a better source of entropy for this
+LINETYPES={'uncompressed': 0, 'shoco': 1, 'zlib_small': 2, 'zlib_large': 3, 'lzma': 4}
 
 # Check if sys.argv has arguments. Set myFile accordingly. Usage is ./file [inFile] [passwordhex] [salthex]
 if len(sys.argv) >= 2:
@@ -32,7 +33,7 @@ realhmac = b'';
 
 # Get version
 VERSION = struct.unpack('>I', b85decode(bytes(myFile.readline().rstrip('\n'), 'ASCII')))[0]
-if VERSION not in [3]:
+if VERSION not in [4]:
 	raise ValueError("Version unsupported")
 
 # Loop through lines in stdin
@@ -47,19 +48,35 @@ for encodedraw in myFile:
 			decoded = b85decode(bytes(encoded, 'ASCII'))
 
 			# Generate salt and key from deterministically generated seed.
-			lineseed = decoded[:16]
+			lineseed = decoded[:17]
 			linekey = hmac.new(MASTER_KEY, lineseed, hashlib.sha256).digest()
 			linesalt = hmac.new(PASSWORD_SALT, lineseed, hashlib.md5).digest()
 
-			# Decode from base85, Decrypt, Decompress
-			encrypted = decoded[16:]
+			# Decode from base85, Decrypt
+			encrypted = decoded[17:]
 			decryptor = Cipher(algorithms.ChaCha20(linekey, linesalt), None, backend=backend).decryptor()
 			compressed = decryptor.update(encrypted) + decryptor.finalize()
-			line = pyshoco.decompress(compressed)
+
+			# Get linetype and decompress accordingly
+			linetype = decoded[0]
+			if linetype == LINETYPES['uncompressed']:
+				line = compressed
+			elif linetype == LINETYPES['shoco']:
+				line = pyshoco.decompress(compressed)
+			elif linetype == LINETYPES['zlib_small']:
+				decompressor = zlib.decompressobj(wbits=-9)
+				line = decompressor.decompress(compressed)
+			elif linetype == LINETYPES['zlib_large']:
+				decompressor = zlib.decompressobj(wbits=-15)
+				line = decompressor.decompress(compressed)
+			elif linetype == LINETYPES['lzma']:
+				line = lzma.decompress(compressed, format=lzma.FORMAT_RAW, check=-1, preset=None, filters=[{"id": lzma.FILTER_LZMA2, "preset": 6}])
+			else:
+				raise ValueError("Invalid Line Type Header %x" % linetype);
 
 			# Verify single line
 			linehash = hmac.new(MASTER_KEY, line, hashlib.sha512).digest()
-			if not hmac.compare_digest(hmac.new(MASTER_KEY, linehash, hashlib.md5).digest(), lineseed):
+			if not hmac.compare_digest(hmac.new(MASTER_KEY, linehash, hashlib.md5).digest(), lineseed[1:]):
 				raise ValueError("Integrity Check Failed: Invalid Line HMAC");
 
 			# Add line to file hmac
