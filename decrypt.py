@@ -27,12 +27,12 @@ if len(sys.argv) == 1:
 MASTER_KEY=Scrypt(salt=PASSWORD_SALT, length=32, n=16384, r=8, p=1, backend=backend).derive(SECRET_PASSWORD)
 
 # Initialize hmac for file
-filehmac = hmac.new(MASTER_KEY);
+filehmac = hmac.new(MASTER_KEY, None, hashlib.sha256);
 realhmac = b'';
 
 # Get version
 VERSION = struct.unpack('>I', b85decode(bytes(myFile.readline().rstrip('\n'), 'ASCII')))[0]
-if VERSION not in [2]:
+if VERSION not in [3]:
 	raise ValueError("Version unsupported")
 
 # Loop through lines in stdin
@@ -40,15 +40,15 @@ for encodedraw in myFile:
 	encoded = encodedraw.rstrip('\n')
 
 	if encoded:
-		if encoded[:3] == 'H: ':
+		if encoded[:2] == 'H ':
 			# Copy over hmac
-			realhmac = b85decode(bytes(encoded[3:], 'ASCII'))
+			realhmac = b85decode(bytes(encoded[2:], 'ASCII'))
 		else:
 			decoded = b85decode(bytes(encoded, 'ASCII'))
 
 			# Generate salt and key from deterministically generated seed.
 			lineseed = decoded[:16]
-			linekey = Scrypt(salt=lineseed, length=32, n=2048, r=2, p=1, backend=backend).derive(MASTER_KEY)
+			linekey = hmac.new(MASTER_KEY, lineseed, hashlib.sha256).digest()
 			linesalt = hmac.new(PASSWORD_SALT, lineseed, hashlib.md5).digest()
 
 			# Decode from base85, Decrypt, Decompress
@@ -57,7 +57,12 @@ for encodedraw in myFile:
 			compressed = decryptor.update(encrypted) + decryptor.finalize()
 			line = pyshoco.decompress(compressed)
 
-			# Add line to hmac
+			# Verify single line
+			linehash = hmac.new(MASTER_KEY, line, hashlib.sha512).digest()
+			if not hmac.compare_digest(hmac.new(MASTER_KEY, linehash, hashlib.md5).digest(), lineseed):
+				raise ValueError("Integrity Check Failed: Invalid Line HMAC");
+
+			# Add line to file hmac
 			filehmac.update(line)
 
 			# Print to stdout
@@ -69,4 +74,4 @@ for encodedraw in myFile:
 
 # Verify final hash. If invalid, exit failure
 if not hmac.compare_digest(filehmac.digest(), realhmac):
-	raise ValueError("Integrity Check Failed: Invalid HMAC")
+	raise ValueError("Integrity Check Failed: Invalid File HMAC")
