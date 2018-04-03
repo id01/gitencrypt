@@ -1,3 +1,9 @@
-[submodule "shoco"]
-	path = shoco
+[submodule "header/shoco"]
+	path = header/shoco
 	url = https://github.com/id01/shoco
+[submodule "header/z85"]
+	path = header/z85
+	url = https://github.com/artemkin/z85
+[submodule "header/scrypt-jane"]
+	path = header/scrypt-jane
+	url = https://github.com/floodyberry/scrypt-jane
