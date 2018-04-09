@@ -1,9 +1,1 @@
-shoco/*.so
-shoco/*.o
-shoco/*.html
-shoco/*.js
-shoco/test.py
-shoco/shoco
-shoco/pyshoco.so
-shoco/training_data
-shoco/models
+git_encrypt
