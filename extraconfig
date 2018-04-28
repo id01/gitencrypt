@@ -1,3 +1,3 @@
 [filter "gitencrypt"]
-	smudge = /path/to/git_encrypt decrypt %f 51026df7de9b8a295a1a1049db9acabb7c79f2d445f65939c4de64d7a41234cb
-	clean = /path/to/git_encrypt encrypt %f 51026df7de9b8a295a1a1049db9acabb7c79f2d445f65939c4de64d7a41234cb
+	smudge = /path/to/git_encrypt decrypt %f 51026df7de9b8a295a1a1049db9acabb7c79f2d445f65939c4de64d7a41234cb y
+	clean = /path/to/git_encrypt encrypt %f 51026df7de9b8a295a1a1049db9acabb7c79f2d445f65939c4de64d7a41234cb y

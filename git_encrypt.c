@@ -15,26 +15,39 @@ const unsigned int LINESEED_LEN=16, SHA256_LEN=32; // Note: Only the first 16 by
 // Main function
 int main(int argc, char* argv[]) {
 	// Check input
-	if (argc != 4) {
-		perror("Usage: ./gitcrypt [encrypt|decrypt] [file] [secret_password]");
-		return 254;
+	if (argc != 4 && argc != 5) {
+		perror("Usage: ./gitcrypt [encrypt|decrypt] [file] [secret_password] [stdin mode y/n]");
+		return ERR_SYNTAX;
 	}
 
-	// Set mode
-	if (argv[1][0] != 'e' && argv[1][0] != 'd') {
-		perror("Invalid input.");
-		return 254;
-	}
+	// Set mode (encrypt/decrypt) and stdin mode (y/n)
 	char mode = argv[1][0];
+	char stdinmode = 'n';
+	if (argc == 5) {
+		stdinmode = argv[4][0];
+	}
 
-	// Get input file name and input file salt file name, open input file and salt file
+	// Get input file name and input file salt file name, open input file
 	size_t inFileName_len = strlen(argv[2])+1;
 	size_t saltFileName_len = inFileName_len+saltFileExtension_len;
-	char* inFileName = malloc(saltFileName_len);
-	char* saltFileName = inFileName;
+	char* inFileName = malloc(inFileName_len);
+	char* saltFileName = malloc(saltFileName_len);
+
 	memcpy(inFileName, argv[2], inFileName_len);
-	FILE* inFile = fopen(inFileName, "r");
+	memcpy(saltFileName, argv[2], inFileName_len);
 	memcpy(saltFileName+inFileName_len-1, saltFileExtension, saltFileExtension_len);
+
+	FILE* inFile = stdin;
+	if (stdinmode != 'y') {
+		inFile = fopen(inFileName, "r");
+	}
+
+	// Check if inFile exists
+	if (inFile == NULL) {
+		system("pwd 1>&2"); perror(saltFileName); perror(inFileName); system("pwd 1>&2");
+		handleErrors("File not found");
+		return ERR_FILE_NOT_FOUND;
+	}
 
 	// Run encrypt/decrypt, close inFile, and return result
 	enum status res;
@@ -45,8 +58,8 @@ int main(int argc, char* argv[]) {
 		res = runDecrypt(inFile, stdout, argv[3], saltFileName);
 		fclose(inFile);
 	} else {
-		puts("Invalid mode");
-		return -1;
+		perror("Invalid mode");
+		return ERR_SYNTAX;
 	}
 	return res;
 }
@@ -61,12 +74,11 @@ enum status runEncrypt(FILE* inFile, FILE* outFile, char* password, char* saltFi
 	fputs(VERSION_ENCODED, outFile);
 
 	// Get salt
-	FILE* saltFile;
-	unsigned char saltZ85[saltCharsEncoded+1], salt[saltChars];
-	if (access( saltFileName, F_OK ) == 0) { // Salt file already exists
+	FILE* saltFile = fopen(saltFileName, "r");
+	unsigned char saltZ85[saltCharsEncoded+2], salt[saltChars];
+	if (saltFile != NULL) { // Salt file already exists
 		// Get salt from salt file and decode it. Close salt file.
-		saltFile = fopen(saltFileName, "r");
-		fgets(saltZ85, saltCharsEncoded, saltFile);
+		fgets(saltZ85, saltCharsEncoded+1, saltFile); // Note that we need 1 additional char because on some systems this includes the null terminator
 		Z85_decode(saltZ85, salt, saltCharsEncoded);
 		fclose(saltFile);
 	} else { // Salt file doesn't exist
@@ -186,13 +198,12 @@ enum status runDecrypt(FILE* inFile, FILE* outFile, char* password, char* saltFi
 	}
 
 	// Get salt
-	FILE* saltFile;
-	unsigned char saltZ85[saltCharsEncoded+3], salt[saltChars], saltZ85Check[saltCharsEncoded+1];
-	if (access( saltFileName, F_OK ) == 0) { // Salt file already exists
+	FILE* saltFile = saltFile = fopen(saltFileName, "r");
+	unsigned char saltZ85[saltCharsEncoded+3], salt[saltChars], saltZ85Check[saltCharsEncoded+2];
+	if (saltFile != NULL) { // Salt file already exists
 		// Get salt from salt file and salt from inFile.
-		saltFile = fopen(saltFileName, "r");
-		fgets(saltZ85, saltCharsEncoded+2, inFile);
-		fgets(saltZ85Check, saltCharsEncoded, saltFile); // This will get newline and null terminator, but doesn't matter
+		fgets(saltZ85, saltCharsEncoded+2, inFile); // This will get newline and null terminator, but doesn't matter
+		fgets(saltZ85Check, saltCharsEncoded+1, saltFile); // Note that we need 1 additional char because on some systems this includes the null terminator
 		// If the two salts differ, throw error.
 		if (memcmp(saltZ85, saltZ85Check, saltCharsEncoded)) {
 			handleErrors("Wrong salt");
