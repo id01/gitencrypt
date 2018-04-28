@@ -6,8 +6,8 @@
 
 /* MAIN FUNCTIONS */
 // Function Prototypes
-enum status runEncrypt(FILE* inFile, FILE* outFile, byte* MASTER_KEY);
-enum status runDecrypt(FILE* inFile, FILE* outFile, byte* MASTER_KEY);
+enum status runEncrypt(FILE* inFile, FILE* outFile, char* password, char* saltFileName);
+enum status runDecrypt(FILE* inFile, FILE* outFile, char* password, char* saltFileName);
 
 // Constants
 const unsigned int LINESEED_LEN=16, SHA256_LEN=32; // Note: Only the first 16 bytes of linesalt will be used.
@@ -25,37 +25,77 @@ int main(int argc, char* argv[]) {
 		perror("Invalid input.");
 		return 254;
 	}
-	unsigned char mode = argv[1][0];
+	char mode = argv[1][0];
 
-	// Open input file
-	FILE* inFile = fopen(argv[2], "r");
+	// Get input file name and input file salt file name, open input file and salt file
+	size_t inFileName_len = strlen(argv[2])+1;
+	size_t saltFileName_len = inFileName_len+saltFileExtension_len;
+	char* inFileName = malloc(saltFileName_len);
+	char* saltFileName = inFileName;
+	memcpy(inFileName, argv[2], inFileName_len);
+	FILE* inFile = fopen(inFileName, "r");
+	memcpy(saltFileName+inFileName_len-1, saltFileExtension, saltFileExtension_len);
 
-	// Generate master key from password using scrypt-16384-8-1
-	unsigned char* MASTER_KEY = malloc(MASTER_KEY_LEN);
-	scrypt(argv[3], strlen(argv[3]), "", 0, 13, 3, 0, MASTER_KEY, MASTER_KEY_LEN); // argv[3] is secret_password
-
-	// Run encrypt/decrypt
+	// Run encrypt/decrypt, close inFile, and return result
+	enum status res;
 	if (mode == 'e') {
-		return runEncrypt(inFile, stdout, MASTER_KEY);
+		res = runEncrypt(inFile, stdout, argv[3], saltFileName);
+		fclose(inFile);
+	} else if (mode == 'd') {
+		res = runDecrypt(inFile, stdout, argv[3], saltFileName);
+		fclose(inFile);
 	} else {
-		return runDecrypt(inFile, stdout, MASTER_KEY);
+		puts("Invalid mode");
+		return -1;
 	}
+	return res;
 }
 
 // Function to encrypt/compress a file
-enum status runEncrypt(FILE* inFile, FILE* outFile, unsigned char* MASTER_KEY) {
-	// Initialize hmac for file
-	HMAC_CTX* fileHMAC;
-	fileHMAC = HMAC_CTX_new();
-	HMAC_Init_ex(fileHMAC, MASTER_KEY, MASTER_KEY_LEN, EVP_sha256(), NULL);
-
-	// Swap version bytes to big-endian, encode in base85, then output and update HMAC
+enum status runEncrypt(FILE* inFile, FILE* outFile, char* password, char* saltFileName) {
+	// Swap version bytes to big-endian, encode in base85, then output
 	uint32_t VERSION_SWAP = htonl(VERSION);
 	char VERSION_ENCODED[7];
 	Z85_encode((byte*)(&VERSION_SWAP), VERSION_ENCODED, 4);
 	VERSION_ENCODED[5] = '\n'; VERSION_ENCODED[6] = 0;
 	fputs(VERSION_ENCODED, outFile);
+
+	// Get salt
+	FILE* saltFile;
+	unsigned char saltZ85[saltCharsEncoded+1], salt[saltChars];
+	if (access( saltFileName, F_OK ) == 0) { // Salt file already exists
+		// Get salt from salt file and decode it. Close salt file.
+		saltFile = fopen(saltFileName, "r");
+		fgets(saltZ85, saltCharsEncoded, saltFile);
+		Z85_decode(saltZ85, salt, saltCharsEncoded);
+		fclose(saltFile);
+	} else { // Salt file doesn't exist
+		// Generate salt, encode it, and write to salt file. Close salt file.
+		saltFile = fopen(saltFileName, "w");
+		if (getrandom(salt, saltChars, 0) == -1) {
+			handleErrors("Error on random salt generation");
+			return ERR_RANDOM_GEN;
+		}
+		Z85_encode(salt, saltZ85, saltChars);
+		saltZ85[saltCharsEncoded] = 0;
+		fputs(saltZ85, saltFile);
+		fclose(saltFile);
+	}
+
+	// Generate master key from password using scrypt-16384-8-1
+	unsigned char* MASTER_KEY = malloc(MASTER_KEY_LEN);
+	scrypt(password, strlen(password), salt, saltChars, 13, 3, 0, MASTER_KEY, MASTER_KEY_LEN); // argv[3] is secret_password
+
+	// Initialize hmac for file
+	HMAC_CTX* fileHMAC;
+	fileHMAC = HMAC_CTX_new();
+	HMAC_Init_ex(fileHMAC, MASTER_KEY, MASTER_KEY_LEN, EVP_sha256(), NULL);
+
+	// Update HMAC with version
 	if (HMAC_Update(fileHMAC, (byte*)(&VERSION_SWAP), 4) != 1) { handleErrors("Error on HMAC Update"); return ERR_HMAC_UPDATE; }
+
+	// Print salt as first line of non-version output to outFile
+	fprintf(outFile, "%s\n", saltZ85);
 
 	// Loop through lines in inFile
 	char *line, *encoded; size_t line_len, encoded_len, encoded_max_len;
@@ -134,13 +174,8 @@ enum status runEncrypt(FILE* inFile, FILE* outFile, unsigned char* MASTER_KEY) {
 }
 
 // Function to decrypt a file
-enum status runDecrypt(FILE* inFile, FILE* outFile, unsigned char* MASTER_KEY) {
-	// Initialize hmac for file
-	HMAC_CTX* fileHMAC;
-	fileHMAC = HMAC_CTX_new();
-	HMAC_Init_ex(fileHMAC, MASTER_KEY, MASTER_KEY_LEN, EVP_sha256(), NULL);
-
-	// Get version bytes from first line, decode in base85, then check compatibility and update HMAC
+enum status runDecrypt(FILE* inFile, FILE* outFile, char* password, char* saltFileName) {
+	// Get version bytes from first line, decode in base85, then check compatibility
 	char VERSION_ENCODED[8];
 	fgets(VERSION_ENCODED, 7, inFile);
 	uint32_t VERSION_SWAP;
@@ -149,6 +184,43 @@ enum status runDecrypt(FILE* inFile, FILE* outFile, unsigned char* MASTER_KEY) {
 		handleErrors("Incompatible version");
 		return ERR_INCOMPATIBLE_VERSION;
 	}
+
+	// Get salt
+	FILE* saltFile;
+	unsigned char saltZ85[saltCharsEncoded+3], salt[saltChars], saltZ85Check[saltCharsEncoded+1];
+	if (access( saltFileName, F_OK ) == 0) { // Salt file already exists
+		// Get salt from salt file and salt from inFile.
+		saltFile = fopen(saltFileName, "r");
+		fgets(saltZ85, saltCharsEncoded+2, inFile);
+		fgets(saltZ85Check, saltCharsEncoded, saltFile); // This will get newline and null terminator, but doesn't matter
+		// If the two salts differ, throw error.
+		if (memcmp(saltZ85, saltZ85Check, saltCharsEncoded)) {
+			handleErrors("Wrong salt");
+			return ERR_WRONG_SALT;
+		}
+		// Decode saltZ85, close saltFile and continue
+		Z85_decode(saltZ85, salt, saltCharsEncoded);
+		fclose(saltFile);
+	} else { // Salt file doesn't exist
+		// Get salt from inFile and write to saltFile.
+		saltFile = fopen(saltFileName, "w");
+		fgets(saltZ85, saltCharsEncoded+2, inFile); // This will get newline and null terminator, but doesn't matter
+		fwrite(saltZ85, saltCharsEncoded, 1, saltFile);
+		// Decode salt from inFile and close saltFile
+		Z85_decode(saltZ85, salt, saltCharsEncoded);
+		fclose(saltFile);
+	}
+
+	// Generate master key from password using scrypt-16384-8-1
+	unsigned char* MASTER_KEY = malloc(MASTER_KEY_LEN);
+	scrypt(password, strlen(password), salt, saltChars, 13, 3, 0, MASTER_KEY, MASTER_KEY_LEN); // argv[3] is secret_password
+
+	// Initialize hmac for file
+	HMAC_CTX* fileHMAC;
+	fileHMAC = HMAC_CTX_new();
+	HMAC_Init_ex(fileHMAC, MASTER_KEY, MASTER_KEY_LEN, EVP_sha256(), NULL);
+
+	// Update version HMAC
 	if (HMAC_Update(fileHMAC, (byte*)(&VERSION_SWAP), 4) != 1) { handleErrors("Error on HMAC Update"); return ERR_HMAC_UPDATE; }
 
 	// Loop through lines in inFile

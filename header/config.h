@@ -1,6 +1,14 @@
 /* CONFIGURATION VARIABLES */
 typedef unsigned char byte;
-enum status {SUCCESS=0, ERR_HMAC_UPDATE, ERR_COMPRESSION, ERR_ENCRYPTION, ERR_HMAC_FINALIZATION, ERR_CORRUPTED_FILE, ERR_INCOMPATIBLE_VERSION};
+
+// General
+enum status {SUCCESS=0, ERR_HMAC_UPDATE, ERR_COMPRESSION, ERR_ENCRYPTION, ERR_HMAC_FINALIZATION, ERR_CORRUPTED_FILE, ERR_INCOMPATIBLE_VERSION, ERR_RANDOM_GEN, ERR_WRONG_SALT};
 const byte LINETYPES_UNCOMPRESSED = 0, LINETYPES_SHOCO = 1, LINETYPES_DEFLATE = 2, LINETYPES_ERROR = 255;
-const uint32_t VERSION = 5;
+const uint32_t VERSION = 6;
 const size_t MASTER_KEY_LEN = 32;
+
+// Salt
+const char saltFileExtension[] = ".salt";
+size_t saltFileExtension_len = sizeof(saltFileExtension);
+unsigned int saltChars = 16; // Should be divisible by 4
+unsigned int saltCharsEncoded = 20; // Should be exactly 5/4 saltChars
